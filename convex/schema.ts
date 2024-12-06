@@ -6,11 +6,11 @@ export default defineSchema({
     userId: v.string(),
     role: v.union(v.literal("user"), v.literal("admin")),
     createdAt: v.number(),
+    name: v.string(),
     // optional fields
     profileDetails: v.optional(
       v.object({
         email: v.optional(v.string()),
-        name: v.optional(v.string()),
         picture: v.optional(v.string()),
         height: v.optional(v.number()),
         weight: v.optional(v.number()),
@@ -18,7 +18,7 @@ export default defineSchema({
     ),
   })
     .index("by_userId", ["userId"])
-    .index("by_name", ["profileDetails.name"]),
+    .index("by_name", ["name"]),
 
   chats: defineTable({
     senderId: v.id("users"),
