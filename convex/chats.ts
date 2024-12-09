@@ -1,72 +1,156 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 
-export const getOrCreateChat = mutation({
+
+// Get chats for a specific user
+export const getChats = query({
   args: {
-    senderId: v.string(), // Clerk user ID of the sender
-    participantIds: v.array(v.string()), // Array of Clerk user IDs of participants
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Get user's Convex ID
+    const user = await ctx.db
+      .query("users")
+      .filter((q) => q.eq(q.field("userId"), args.userId))
+      .first();
+
+    if (!user) throw new Error("User not found");
+
+    // Get all chats
+    const chats = await ctx.db
+      .query("chats")
+      .collect();
+
+      //VERY IMPORTANT LEARNING FOR TYPESCRIPT
+    // Filter chats where user is a participant
+    const userChats = chats.filter(chat => 
+      chat.participants.find((id: Id<"users">) => id === user._id)
+    );
+
+    // Enrich chats with participant details and last message
+    return Promise.all(userChats.map(async (chat) => {
+      const participants = await Promise.all(
+        chat.participants.map(async (participantId: any) => {
+          const user = await ctx.db.get(participantId);
+          return {
+            _id: user!._id,
+            userId: user!.userId,
+            name: user!.name,
+          };
+        })
+      );
+
+      const lastMessage = chat.lastMessageId 
+        ? await ctx.db.get(chat.lastMessageId)
+        : null;
+
+      return {
+        ...chat,
+        participants,
+        lastMessage: lastMessage ? {
+          content: lastMessage.content,
+          createdAt: lastMessage.createdAt,
+          senderId: lastMessage.senderId
+        } : null
+      };
+    }));
+  }
+});
+
+// Create a new chat
+export const createChat = mutation({
+  args: {
+    senderId: v.string(),
+    participantIds: v.array(v.string()),
     type: v.union(v.literal("private"), v.literal("group")),
   },
   handler: async (ctx, args) => {
-    // Validate sender exists
-    const senderUser = await ctx.db
+    // Get sender's Convex ID
+    const sender = await ctx.db
       .query("users")
       .filter((q) => q.eq(q.field("userId"), args.senderId))
       .first();
+    if (!sender) throw new Error("Sender not found");
 
-    if (!senderUser) {
-      throw new Error("Sender user not found");
-    }
-
-    // Validate all participants exist and get their Convex IDs
-    const participantUsers = await Promise.all(
-      args.participantIds.map(async (participantId) => {
+    // Get participants' Convex IDs
+    const participants = await Promise.all(
+      args.participantIds.map(async (id) => {
         const user = await ctx.db
           .query("users")
-          .filter((q) => q.eq(q.field("userId"), participantId))
+          .filter((q) => q.eq(q.field("userId"), id))
           .first();
-
-        if (!user) {
-          throw new Error(`Participant user ${participantId} not found`);
-        }
-        return user;
+        if (!user) throw new Error(`Participant ${id} not found`);
+        return user._id;
       })
     );
 
-    // Ensure sender is included in participants
-    const participantIds = [
-      ...new Set([...participantUsers.map((u) => u._id), senderUser._id]),
-    ];
-
-    // For private chats, ensure only 2 participants
-    if (args.type === "private" && participantIds.length > 2) {
-      throw new Error("Private chat can only have 2 participants");
+    // Add sender to participants if not included
+    const allParticipants = [...new Set([...participants, sender._id])];
+    
+    if (args.type === "private" && allParticipants.length !== 2) {
+      throw new Error("Private chats must have exactly 2 participants");
     }
 
-    // Check for existing chat with exact same participants
-    const existingChat = await ctx.db
-      .query("chats")
-      .filter((q) => q.eq(q.field("type"), args.type))
-      .filter((q) => q.eq(q.field("participants"), participantIds))
-      .first();
-
-    if (existingChat) {
-      return existingChat._id;
-    }
-
-    // Generate a unique chatId
-    const chatId = crypto.randomUUID();
-
-    // Create new chat
-    const newChatId = await ctx.db.insert("chats", {
-      senderId: senderUser._id,
-      chatId: chatId,
+    // Create chat
+    return ctx.db.insert("chats", {
+      senderId: sender._id,
+      chatId: crypto.randomUUID(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      participants: participantIds,
+      participants: allParticipants,
       type: args.type,
     });
+  },
+});
 
-    return newChatId;
+// Get existing chat or create new one
+export const getOrCreateChat = mutation({
+  args: {
+    senderId: v.string(),
+    participantIds: v.array(v.string()),
+    type: v.union(v.literal("private"), v.literal("group")),
+  },
+  handler: async (ctx, args) => {
+    // Get sender's Convex ID
+    const sender = await ctx.db
+      .query("users")
+      .filter((q) => q.eq(q.field("userId"), args.senderId))
+      .first();
+    if (!sender) throw new Error("Sender not found");
+
+    // Get participants' Convex IDs
+    const participants = await Promise.all(
+      args.participantIds.map(async (id) => {
+        const user = await ctx.db
+          .query("users")
+          .filter((q) => q.eq(q.field("userId"), id))
+          .first();
+        if (!user) throw new Error(`Participant ${id} not found`);
+        return user._id;
+      })
+    );
+
+    // Add sender to participants if not included
+    const allParticipants = [...new Set([...participants, sender._id])];
+
+    // Get all chats of the specified type
+    const chats = await ctx.db
+      .query("chats")
+      .filter((q) => q.eq(q.field("type"), args.type))
+      .collect();
+
+    // Find a chat with exactly these participants
+    const existingChat = chats.find(chat => {
+      if (chat.participants.length !== allParticipants.length) return false;
+      return allParticipants.every(participantId => 
+        chat.participants.includes(participantId)
+      );
+    });
+
+    if (existingChat) return existingChat._id;
+
+    // Create new chat if none exists
+    return createChat(ctx, args);
   },
 });
