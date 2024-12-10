@@ -245,3 +245,95 @@ export const getMessages = query({
     }));
   },
 });
+
+
+// Delete a message
+export const deleteMessage = mutation({
+  args: {
+    messageId: v.string(),
+    chatId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Get the message
+    const message = await ctx.db
+      .query("messages")
+      .filter((q) => q.eq(q.field("messageId"), args.messageId))
+      .first();
+    if (!message) throw new Error("Message not found");
+
+    // Get the chat
+    const chat = await ctx.db
+      .query("chats")
+      .filter((q) => q.eq(q.field("chatId"), args.chatId))
+      .first();
+    if (!chat) throw new Error("Chat not found");
+
+    // Delete the message
+    await ctx.db.delete(message._id);
+
+    // Update lastMessageId if necessary
+    if (chat.lastMessageId === message._id) {
+      // Get the most recent message in the chat
+      const unorderedrecentMessage = await ctx.db
+        .query("messages")
+        .filter((q) => q.eq(q.field("chatId"), chat._id))
+        .first();
+
+      const recentMessage = unorderedrecentMessage.sort((a :any, b :any) => b.createdAt - a.createdAt);
+
+      await ctx.db.patch(chat._id, {
+        lastMessageId: recentMessage ? recentMessage._id : null,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return { success: true };
+  },
+});
+
+
+export const deleteChat = mutation({
+  args: {
+    chatId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Find the chat in the database
+    const chat = await ctx.db
+      .query("chats")
+      .filter((q) => q.eq(q.field("chatId"), args.chatId))
+      .first();
+
+    if (!chat) {
+      throw new Error("Chat not found");
+    }
+
+    // Fetch all messages associated with the chat
+    const messages = await ctx.db
+      .query("messages")
+      .filter((q) => q.eq(q.field("chatId"), chat._id))
+      .collect();
+
+    // Delete all media related to the chat's messages
+    await Promise.all(
+      messages.map(async (message) => {
+        if (message.type !== "text" && message.mediaUrl) {
+          // Delete media entry
+          const mediaDoc = await ctx.db
+            .query("media")
+            .filter((q) => q.eq(q.field("messageId"), message._id))
+            .first();
+          if (mediaDoc) {
+            await ctx.db.delete(mediaDoc._id);
+          }
+        }
+        // Delete the message itself
+        await ctx.db.delete(message._id);
+      })
+    );
+
+    // Delete the chat itself
+    await ctx.db.delete(chat._id);
+
+    return { success: true, message: "Chat and associated data deleted successfully" };
+  },
+});
