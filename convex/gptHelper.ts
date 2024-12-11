@@ -6,7 +6,7 @@ const openai = new OpenAIApi(
   })
 );
 
-export async function generateGPTResponse(prompt) {
+export async function generateGPTResponse(prompt: string) {
   try {
     const response = await openai.createChatCompletion({
       model: "gpt-4", // Use the model you prefer

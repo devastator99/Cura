@@ -66,15 +66,15 @@ export default defineSchema({
     ),
     size: v.optional(v.number()),
     mimeType: v.string(),
-    duration: v.optional(v.number()), //this is required video and audio
+    duration: v.optional(v.number()), //absolutely required for video and audio
     fileName: v.string(),
     createdAt: v.number(),
     metadata: v.optional(
       v.object({
-        width: v.optional(v.number()), // Image/video width
-        height: v.optional(v.number()), // Image/video height
-        resolution: v.optional(v.string()), // Example: "1080p"
-        bitRate: v.optional(v.number()), // For audio/video quality
+        width: v.optional(v.number()),
+        height: v.optional(v.number()),
+        resolution: v.optional(v.string()),
+        bitRate: v.optional(v.number()),
       })
     ),
   })
@@ -97,9 +97,9 @@ export default defineSchema({
     metadata: v.optional(
       v.object({
         // Add metadata for additional details
-        width: v.optional(v.number()), // Example: image width
-        height: v.optional(v.number()), // Example: image height
-        duration: v.optional(v.number()), // Example: media duration
+        width: v.optional(v.number()), 
+        height: v.optional(v.number()), 
+        duration: v.optional(v.number()), 
       })
     ),
     createdAt: v.number(),
@@ -107,4 +107,20 @@ export default defineSchema({
   })
     .index("by_messageId", ["messageId"])
     .index("by_type", ["type"]),
+
+  notifications: defineTable({
+    notificationId: v.string(),
+    userId: v.id("users"), // Clerk user ID
+    type: v.union(
+      v.literal("message"),
+      v.literal("reminder")
+    ),
+    content: v.string(),
+    isRead: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+
+  .index("by_userId", ["userId"]),
+
 });
